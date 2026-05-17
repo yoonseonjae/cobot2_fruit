@@ -1,60 +1,144 @@
-# 🤖 ROS2 음성 제어 로봇 픽앤플레이스 시스템
+# cobot2-fruit-tutorial
 
-음성 명령으로 도구를 인식하고 집어서 홈 위치에 가져다 놓는 ROS2 기반 로봇 자동화 시스템입니다.  
-Doosan M0609 로봇 암, RealSense 깊이 카메라, YOLOv8 객체 인식, Whisper STT, GPT-4o를 활용합니다.
+A ROS2 (Humble) voice-controlled pick-and-place robot system using a **Doosan M0609** arm, **Intel RealSense** depth camera, **YOLO** object detection, and **Whisper + GPT-4o** voice commands.
 
----
-
-## 시스템 구성
-
-```
-음성 입력 (웨이크워드 + 도구 이름)
-        ↓
-voice_processing — Whisper STT + GPT-4o로 도구 이름 추출
-        ↓
-robot_control — 도구별 순서대로 픽앤플레이스 반복
-        ↓
-object_detection — YOLOv8으로 도구 위치 탐지 (카메라 좌표 → 로봇 베이스 좌표 변환)
-        ↓
-Doosan M0609 + OnRobot RG2 그리퍼로 동작 실행
-```
-
-### 패키지 구조
-
-| 패키지 | 역할 |
-|---|---|
-| `robot_control` | 로봇 모션 제어, 픽앤플레이스 로직 |
-| `object_detection` | YOLOv8 추론, 3D 위치 서비스, 바운딩박스 시각화 |
-| `voice_processing` | 웨이크워드 감지, STT, LLM 키워드 추출 |
-| `od_msg` | 커스텀 ROS2 서비스 메시지 (`SrvDepthPosition`) |
-
-### 인식 가능한 도구
-
-`drill`, `hammer`, `pliers`, `screwdriver`, `wrench`
+The user speaks a wake word (`"Hello Rokey"`), names one or more fruits, and the robot picks each one sequentially and returns home after each pick.
 
 ---
 
-## 실행 방법
+## Detected Objects
 
-> 모든 터미널에서 `export ROS_DOMAIN_ID=60` 필수
+| Class ID | Label |
+|----------|-------|
+| 0 | Apple |
+| 1 | Banana |
+| 2 | Kiwi |
+| 3 | Orange |
+| 4 | Pear |
 
-### 터미널 1 — 로봇 bringup (Host)
+---
+
+## System Architecture
+
+```
+voice_processing/get_keyword  ──►  /get_keyword (std_srvs/Trigger)
+                                          │
+                                          ▼
+robot_control/robot_control   calls /get_keyword, then /get_3d_position per fruit
+                                          │
+                                          ▼
+object_detection/object_detection  ──►  /get_3d_position (od_msg/SrvDepthPosition)
+                                          │
+                                          ▼
+                               returns [x, y, z] in camera frame
+                                          │
+                                          ▼
+robot_control  transforms camera → base frame, runs pick-and-place, init_robot() between each fruit
+```
+
+### Data Flow
+
+1. `robot_control` calls `/get_keyword` — blocks until user says wake word + fruit names
+2. `get_keyword` uses **Whisper STT + GPT-4o** to extract fruit names as a space-separated string (e.g. `"apple banana"`)
+3. `robot_control` splits into `target_list` and loops: for each fruit → `get_target_pos()` → `pick_and_place_target()` → `init_robot()`
+4. `get_target_pos()` calls `/get_3d_position`, receives 3D position in camera frame, loads `T_gripper2camera.npy`, gets current robot pose, transforms to base frame
+5. `object_detection` publishes `/detection_image` at ~10 Hz with bounding boxes drawn; `bbox_viewer` subscribes to display it
+
+---
+
+## ROS Interfaces
+
+| Topic / Service | Type | Direction |
+|---|---|---|
+| `/get_keyword` | `std_srvs/Trigger` | voice_processing serves, robot_control calls |
+| `/get_3d_position` | `od_msg/SrvDepthPosition` (string target → float64[] depth_position) | object_detection serves, robot_control calls |
+| `/detection_image` | `sensor_msgs/Image` | object_detection publishes |
+| `/camera/camera/color/image_raw` | `sensor_msgs/Image` | RealSense publishes |
+| `/camera/camera/aligned_depth_to_color/image_raw` | `sensor_msgs/Image` | RealSense publishes |
+
+---
+
+## Package Structure
+
+```
+ros2_ws/src/
+├── object_detection/       # YOLO inference + 3D position service + image publisher
+│   ├── object_detection/
+│   │   ├── detection.py    # /get_3d_position service + /detection_image publisher
+│   │   ├── yolo.py         # Multi-frame aggregation with IoU grouping
+│   │   ├── bbox_viewer.py  # Subscriber to display bounding boxes
+│   │   └── visualize.py
+│   └── resource/
+│       ├── class_name_tool.json   # Class ID → label mapping
+│       └── T_gripper2camera.npy  # Hand-eye calibration matrix
+├── od_msg/                 # Custom service definition (SrvDepthPosition)
+├── robot_control/          # All robot motion logic
+│   └── robot_control/
+│       ├── robot_control.py  # Pick-and-place controller
+│       └── onrobot.py        # OnRobot RG2 gripper (Modbus TCP)
+└── voice_processing/       # Wake word detection + Whisper STT
+    └── voice_processing/
+        ├── get_keyword.py
+        ├── wakeup_word.py
+        ├── stt.py
+        └── MicController.py
+```
+
+---
+
+## Prerequisites
+
+- ROS2 Humble
+- Doosan DSR ROS2 package (`dsr_launcher2`, `DSR_ROBOT2`)
+- Intel RealSense ROS2 package (`realsense2_camera`)
+- Docker container for object detection (with YOLO dependencies)
+- OpenAI API key (for Whisper STT + GPT-4o)
+- OnRobot RG2 gripper reachable at `192.168.1.1:502`
+
+**`ROS_DOMAIN_ID=60` must be set in every terminal.**
+
+---
+
+## Build
 
 ```bash
-cd ~/ros2_ws && source install/setup.bash
-export ROS_DOMAIN_ID=60
+cd ~/ros2_ws
+colcon build
+source install/setup.bash
+```
+
+To build a single package:
+
+```bash
+colcon build --packages-select <package_name>
+source install/setup.bash
+```
+
+---
+
+## Running the System
+
+### Terminal 1 — Robot Bringup (Host)
+
+```bash
+cd ~/ros2_ws && source install/setup.bash && export ROS_DOMAIN_ID=60
 ros2 launch dsr_launcher2 dsr_moveit2_m0609.launch.py
 ```
 
-### 터미널 2 — RealSense 카메라 (Host)
+### Terminal 2 — RealSense Camera (Host)
 
 ```bash
-cd ~/ros2_ws && source install/setup.bash
-export ROS_DOMAIN_ID=60
+cd ~/ros2_ws && source install/setup.bash && export ROS_DOMAIN_ID=60
 ros2 launch realsense2_camera rs_launch.py
 ```
 
-### 터미널 3 — 객체 인식 (Docker 컨테이너 내부 — 빈 터미널에서 시작)
+### Terminal 3 — Object Detection (Docker Container)
+
+```bash
+docker exec -it object_detection bash
+```
+
+Inside the container:
 
 ```bash
 cd /home/ros2_ws && source /opt/ros/humble/setup.bash && source install/setup.bash
@@ -62,84 +146,74 @@ export ROS_DOMAIN_ID=60
 ros2 run object_detection object_detection
 ```
 
-### 터미널 4 — 웨이크워드 / STT (Host)
+### Terminal 4 — Voice Recognition (Host)
 
 ```bash
-cd ~/ros2_ws && source install/setup.bash
-export ROS_DOMAIN_ID=60
+cd ~/ros2_ws && source install/setup.bash && export ROS_DOMAIN_ID=60
 ros2 run voice_processing get_keyword
 ```
 
-### 터미널 5 — 로봇 컨트롤러 (Host)
+### Terminal 5 — Robot Controller (Host)
 
 ```bash
-cd ~/ros2_ws && source install/setup.bash
-export ROS_DOMAIN_ID=60
+cd ~/ros2_ws && source install/setup.bash && export ROS_DOMAIN_ID=60
 ros2 run robot_control robot_control
 ```
 
-### (선택) 바운딩박스 뷰어
-
-현재 카메라에서 인식 중인 바운딩박스를 실시간으로 확인합니다.
+### Terminal 6 — Bounding Box Viewer (Optional)
 
 ```bash
-cd ~/ros2_ws && source install/setup.bash
-export ROS_DOMAIN_ID=60
+cd ~/ros2_ws && source install/setup.bash && export ROS_DOMAIN_ID=60
 ros2 run object_detection bbox_viewer
 ```
 
 ---
 
-## 사용 방법
+## Usage
 
-1. 5개 터미널 모두 실행
-2. **"Hello Rokey"** 라고 말해서 웨이크워드 활성화
-3. 도구 이름을 말하면 로봇이 자동으로 집어서 홈 위치에 내려놓음
-4. 여러 도구를 한 번에 말하면 순서대로 처리
+1. Start all 5 terminals
+2. Say **"Hello Rokey"** to activate the wake word
+3. Say one or more fruit names — the robot picks each one and drops it at home position
+4. Multiple fruits spoken at once are processed sequentially
 
-**예시 발화:**
-- `"해머 가져와"` → hammer 1개 픽앤플레이스
-- `"해머랑 랜치 가져와"` → hammer 먼저, 이후 wrench 순서대로 처리
+**Example:**
+- `"Apple"` → picks apple, returns home
+- `"Apple and banana"` → picks apple first, then banana
 
 ---
 
-## 빌드
+## Configuration & Tuning
 
-```bash
-cd ~/ros2_ws
-colcon build --packages-select <패키지명>
-source install/setup.bash
+Key constants in [robot_control.py](src/robot_control/robot_control/robot_control.py):
+
+| Constant | Description |
+|---|---|
+| `VELOCITY`, `ACC` | Robot velocity and acceleration (default: 60) |
+| `JHOME_POS` | Home joint position `[0, -30, 90, 0, 90, 0]` |
+| `PLACE_POS` | Place position in Cartesian space |
+| `DEPTH_OFFSET` | Z-axis offset applied to detected position (mm) |
+| `MIN_DEPTH` | Minimum valid depth reading (mm) |
+
+Hand-eye calibration matrix: `object_detection/resource/T_gripper2camera.npy`
+Recalibrate if the camera is moved relative to the gripper.
+
+OpenAI API key: `voice_processing/resource/.env`
+
+---
+
+## Motion Pattern
+
+- **`init_robot()`** — moves to `JHOME_POS` and opens gripper (the object drops at home pose)
+- **`pick_and_place_target()`** — approach 80 mm above target → descend 30 mm below → close gripper → lift 80 mm → return → `init_robot()` drops object
+
+---
+
+## Gripper
+
+OnRobot RG2 controlled via Modbus TCP ([onrobot.py](src/robot_control/robot_control/onrobot.py)).
+Connection is established at module load time before the ROS node starts.
+
+```python
+gripper.open_gripper()
+gripper.close_gripper()
 ```
-
----
-
-## 주요 설정값
-
-| 항목 | 파일 | 상수명 |
-|---|---|---|
-| 로봇 속도/가속도 | `robot_control/robot_control.py` | `VELOCITY`, `ACC` |
-| 깊이 오프셋 | `robot_control/robot_control.py` | `DEPTH_OFFSET` |
-| 그리퍼 IP | `robot_control/robot_control.py` | `TOOLCHARGER_IP` |
-| 핸드-아이 캘리브레이션 | `object_detection/resource/T_gripper2camera.npy` | — |
-| OpenAI API 키 | `voice_processing/resource/.env` | `OPENAI_API_KEY` |
-
----
-
-## ROS2 인터페이스
-
-| 토픽 / 서비스 | 타입 | 설명 |
-|---|---|---|
-| `/get_keyword` | `std_srvs/Trigger` | 음성 키워드 요청 서비스 |
-| `/get_3d_position` | `od_msg/SrvDepthPosition` | 도구 3D 좌표 요청 서비스 |
-| `/detection_image` | `sensor_msgs/Image` | 바운딩박스 시각화 이미지 |
-
----
-
-## 동작 시퀀스 (픽앤플레이스)
-
-1. 타겟 상공 80mm 접근
-2. 타겟 위치로 하강 (30mm 추가)
-3. 그리퍼 닫기 (물건 파지)
-4. 80mm 들어올리기
-5. 홈 포즈(`[0,0,90,0,90,0]`)로 복귀 → 그리퍼 열기 (내려놓기)
-6. 다음 도구가 있으면 반복

@@ -19,6 +19,7 @@ ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
 VELOCITY, ACC = 60, 60
 JHOME_POS = [0, -30, 90, 0, 90, 0]
+PLACE_POS = [501.58, -139.35, 396.03, 77.98, -173.62, 81.71]
 GRIPPER_NAME = "rg2"
 TOOLCHARGER_IP = "192.168.1.1"
 TOOLCHARGER_PORT = "502"
@@ -174,8 +175,17 @@ class RobotController(Node):
         JReady = [0, 0, 90, 0, 90, 0]
         movej(JReady, vel=VELOCITY, acc=ACC)
         self.wait_motion()
+
+        self.get_logger().info("[init_robot] move to PLACE_POS")
+        movel(PLACE_POS, vel=VELOCITY, acc=ACC)
+        self.wait_motion()
+
         gripper.open_gripper()
         self.wait_gripper(1.5)
+
+        self.get_logger().info("[init_robot] return to JReady (home)")
+        movej(JReady, vel=VELOCITY, acc=ACC)
+        self.wait_motion()
 
     def pick_and_place_target(self, target_pos):
         # ===== 1. 타겟 상공 80mm 안전 접근 =====
@@ -187,8 +197,8 @@ class RobotController(Node):
             self.get_logger().error("approach move failed")
             return
 
-        # ===== 2. 타겟까지 하강 (10mm 더 깊게) =====
-        target_pos[2] -= 30
+        # ===== 2. 타겟까지 하강 (Num mm 더 깊게) =====
+        target_pos[2] -= 70
         self.get_logger().info(f"[2/4] descend to target: {target_pos}")
         movel(target_pos, vel=VELOCITY, acc=ACC)
         if not self.wait_motion():

@@ -6,8 +6,8 @@ from ament_index_python.packages import get_package_share_directory
 from ultralytics import YOLO
 from object_detection.realsense import ImgNode
 
-PACKAGE_PATH = get_package_share_directory("pick_and_place_text")
-YOLO_MODEL_PATH = os.path.join(PACKAGE_PATH, "resource", "yolov8n_tools_0122.pt")
+PACKAGE_PATH = get_package_share_directory("object_detection")
+YOLO_MODEL_PATH = os.path.join(PACKAGE_PATH, "resource", "best.pt")
 YOLO_JSON_PATH = os.path.join(get_package_share_directory("object_detection"), "resource", "class_name_tool.json")
 
 

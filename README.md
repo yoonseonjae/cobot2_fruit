@@ -49,6 +49,41 @@ object_detection/object_detection  (YOLO 인식 + RealSense 깊이 → 3D 좌표
 
 ---
 
+## Git 클론 후 수동으로 추가해야 할 파일
+
+`.gitignore`에 의해 저장소에 포함되지 않는 파일들입니다. 클론 후 직접 준비해야 합니다.
+
+| 파일 | 경로 | 설명 |
+|------|------|------|
+| `.env` | `src/voice_processing/resource/.env` | OpenAI API 키 설정 파일 |
+| `best.pt` | `src/object_detection/resource/best.pt` | YOLO 과일 인식 학습 모델 |
+| `T_gripper2camera.npy` | `src/object_detection/resource/T_gripper2camera.npy` | 핸드-아이 캘리브레이션 행렬 |
+
+### `.env` 파일 생성
+
+```bash
+echo "OPENAI_API_KEY=여기에_본인의_API_키_입력" > src/voice_processing/resource/.env
+```
+
+### `best.pt` 모델 배치
+
+YOLO 학습 모델 파일(`best.pt`)을 별도로 전달받아 아래 경로에 복사하세요.
+
+```bash
+cp best.pt src/object_detection/resource/best.pt
+```
+
+### `T_gripper2camera.npy` 배치
+
+핸드-아이 캘리브레이션을 수행하여 생성된 `.npy` 파일을 아래 경로에 복사하세요.  
+카메라 위치가 바뀔 때마다 재캘리브레이션이 필요합니다.
+
+```bash
+cp T_gripper2camera.npy src/object_detection/resource/T_gripper2camera.npy
+```
+
+---
+
 ## 설치 방법
 
 ### 1. 저장소 클론
@@ -58,18 +93,15 @@ git clone https://github.com/yoonseonjae/cobot2_fruit.git ~/ros2_ws
 cd ~/ros2_ws
 ```
 
-### 2. OpenAI API 키 설정
-
-```bash
-# voice_processing 패키지 리소스 디렉토리에 .env 파일 생성
-echo "OPENAI_API_KEY=여기에_본인의_API_키_입력" > src/voice_processing/resource/.env
-```
-
-### 3. Python 의존성 설치
+### 2. Python 의존성 설치
 
 ```bash
 pip install ultralytics langchain-openai python-dotenv pyaudio scipy pymodbus
 ```
+
+### 3. 누락 파일 준비
+
+위의 **"Git 클론 후 수동으로 추가해야 할 파일"** 섹션을 참고하여 `.env`, `best.pt`, `T_gripper2camera.npy`를 배치하세요.
 
 ### 4. ROS2 패키지 빌드
 
